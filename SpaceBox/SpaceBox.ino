@@ -1,13 +1,10 @@
-/// @file    MultiArrays.ino
-/// @brief   Demonstrates how to use multiple LED strips, each with their own data
-/// @example MultiArrays.ino
-
-// MultiArrays - see https://github.com/FastLED/FastLED/wiki/Multiple-Controller-Examples for more info on
-// using multiple controllers.  In this example, we're going to set up three NEOPIXEL strips on three
-// different pins, each strip getting its own CRGB array to be played with
+/**
+ * Space Crate Main Controller
+ */
 
 // https://iotespresso.com/create-captive-portal-using-esp32/
 // INCLUDES
+// For creating a local webpage
 #include <DNSServer.h>
 #include <WiFi.h>
 #include <AsyncTCP.h>
@@ -24,13 +21,21 @@ String user_name;
 String proficiency;
 bool name_received = false;
 bool proficiency_received = false;
-
+// LED strips
 CRGB blLeds[NUM_LEDS_PER_STRIP];
 CRGB flLeds[NUM_LEDS_PER_STRIP];
 CRGB brLeds[NUM_LEDS_PER_STRIP];
 CRGB frLeds[NUM_LEDS_PER_STRIP];
+// Toggle switch input
+int toggleSwitchValue = 0;
+unsigned long lastChangeTime = 0;
+// Tempo at which LEDs pulse
+uint8_t bpm = 30;
 
 // CONSTANTS
+const byte clockPin = 26;
+const byte latchPin = 25;
+const byte dataPin = 33;
 const char index_html[] PROGMEM = R"rawliteral(
 <!DOCTYPE HTML><html><head>
   <title>Captive Portal Demo</title>
@@ -53,18 +58,16 @@ const char index_html[] PROGMEM = R"rawliteral(
 </body></html>)rawliteral";
 
 class CaptiveRequestHandler : public AsyncWebHandler {
-public:
-  CaptiveRequestHandler() {}
-  virtual ~CaptiveRequestHandler() {}
-
-  bool canHandle(AsyncWebServerRequest *request){
-    //request->addInterestingHeader("ANY");
-    return true;
-  }
-
-  void handleRequest(AsyncWebServerRequest *request) {
-    request->send_P(200, "text/html", index_html); 
-  }
+  public:
+    CaptiveRequestHandler() {}
+    virtual ~CaptiveRequestHandler() {}
+    bool canHandle(AsyncWebServerRequest *request){
+      //request->addInterestingHeader("ANY");
+      return true;
+    }
+    void handleRequest(AsyncWebServerRequest *request) {
+      request->send_P(200, "text/html", index_html); 
+    }
 };
 
 void setupServer(){
@@ -97,26 +100,36 @@ void setupServer(){
 }
 
 
-// For mirroring strips, all the "special" stuff happens just in setup.  We
-// just addLeds multiple times, once for each strip
 void setup() {
-    // tell FastLED there's 60 NEOPIXEL leds on pin 11
+  // Initialise serial connection
+  Serial.begin(115200);
+  delay(250);
+  Serial.println(__FILE__ __DATE__);
+
+  // Intialise secondary serial connection to Arduino controller
+  Serial2.begin(9600, SERIAL_8N1, 16, 17);
+  delay(250);
+  // Flush the serial connection to try to prevent garbage characters being sent to Arduino
+  Serial2.flush();
+
+  // Configure GPIO pins
+  pinMode(latchPin, OUTPUT);
+  pinMode(clockPin, OUTPUT);
+  pinMode(dataPin, INPUT);
+
+  // For mirroring strips, all the "special" stuff happens just in setup.  We
+  // just addLeds multiple times, once for each strip
   FastLED.addLeds<WS2812B, 13, GRB>(flLeds, NUM_LEDS_PER_STRIP);
-  // tell FastLED there's 60 NEOPIXEL leds on pin 10
   FastLED.addLeds<WS2812B, 12, GRB>(blLeds, NUM_LEDS_PER_STRIP);
-  // tell FastLED there's 60 NEOPIXEL leds on pin 12
   FastLED.addLeds<WS2812B, 27, GRB>(brLeds, NUM_LEDS_PER_STRIP);
   FastLED.addLeds<WS2812B, 14, GRB>(frLeds, NUM_LEDS_PER_STRIP);
 
-
-  Serial.begin(115200);
-  Serial2.begin(9600);
-
-Serial.println();
+  // Configure web server
   Serial.println("Setting up AP Mode");
   WiFi.mode(WIFI_AP); 
-  WiFi.softAP("esp-captive");
-  Serial.print("AP IP address: ");Serial.println(WiFi.softAPIP());
+  WiFi.softAP("Space Crate");
+  Serial.print("AP IP address: ");
+  Serial.println(WiFi.softAPIP());
   Serial.println("Setting up Async WebServer");
   setupServer();
   Serial.println("Starting DNS Server");
@@ -125,13 +138,39 @@ Serial.println();
   //more handlers...
   server.begin();
   Serial.println("All Done!");
-
-
 }
 
+byte readToggleSwitches(){
+  // Set the shift register to transmit data. CD4021 wants LOW here, HC165 wants HIGH
+  digitalWrite(latchPin, HIGH);
+  // Note that we DON'T use the hardware SPI interface SPI.transfer() for reading the inputs from the HC165 shift register
+  // because it doesn't tristate the MISO line when it not selected (see http://www.gammon.com.au/forum/?id=11979)
+  // So we'll use simple "bit bang" instead using shiftIn() instead
+  byte incoming = shiftIn(dataPin, clockPin, MSBFIRST);
+  // Set the shift register back to gathering input. CD4021 wants HIGH here, HC165 wants LOW
+  digitalWrite(latchPin, LOW);
+  // Toggle switches are wired as "pull-up", so we'll invert the result
+  return 255-incoming;
+}
+
+
 void loop() {
+  
+  unsigned long now = millis();
 
-
+  // Check toggle switches
+  byte currentToggleSwitchValue = readToggleSwitches();
+  if(currentToggleSwitchValue != toggleSwitchValue) {
+    Serial.print("Toggle Switches changed to ");
+    Serial.println(currentToggleSwitchValue);
+    if(currentToggleSwitchValue == B11001001){
+      Serial2.write("You solved the space puzzle crate!");
+      Serial2.write("\n");
+    }
+    toggleSwitchValue = currentToggleSwitchValue;
+  }
+  
+  // Process data received via webserver
   dnsServer.processNextRequest();
   if(name_received && proficiency_received){
       Serial.print("Hello ");
@@ -148,38 +187,20 @@ void loop() {
       Serial2.write("\n");
     }
 
+  // If data received on serial connection, pass it through to Arduino
   while(Serial.available()){
     Serial2.write(Serial.read());
   }
 
-
-  for(int i = 0; i < NUM_LEDS_PER_STRIP; i++) {
-    // set our current dot to red, green, and blue
-    blLeds[i] = CRGB::Blue;
-    flLeds[i] = CRGB::Blue;
-    brLeds[i] = CRGB::Blue;
-    frLeds[i] = CRGB::Blue;
-    FastLED.show();
-    // clear our current dot before we move on
-    blLeds[i] = CRGB::Black;
-    flLeds[i] = CRGB::Black;
-    brLeds[i] = CRGB::Black;
-    frLeds[i] = CRGB::Black;
-    delay(100);
-  }
-
-  for(int i = NUM_LEDS_PER_STRIP-1; i >= 0; i--) {
-    // set our current dot to red, green, and blue
-    blLeds[i] = CRGB::Red;
-    flLeds[i] = CRGB::Red;
-    brLeds[i] = CRGB::Red;
-    frLeds[i] = CRGB::Red;
-    FastLED.show();
-    // clear our current dot before we move on
-    blLeds[i] = CRGB::Black;
-    flLeds[i] = CRGB::Black;
-    brLeds[i] = CRGB::Black;
-    frLeds[i] = CRGB::Black;
-    delay(100);
-  }
+  // A coloured dot sweeping back and forth, with fading trails
+  fadeToBlackBy(blLeds, NUM_LEDS_PER_STRIP, 10);
+  fadeToBlackBy(flLeds, NUM_LEDS_PER_STRIP, 10);
+  fadeToBlackBy(brLeds, NUM_LEDS_PER_STRIP, 10);
+  fadeToBlackBy(frLeds, NUM_LEDS_PER_STRIP, 10);
+  int pos = beatsin8(bpm, 0, NUM_LEDS_PER_STRIP-1 );
+  blLeds[pos] += CHSV(0, 255, 128);
+  flLeds[pos] += CHSV(0, 255, 128);
+  brLeds[pos] += CHSV(0, 255, 128);  
+  frLeds[pos] += CHSV(0, 255, 128);
+  FastLED.show();
 }

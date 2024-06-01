@@ -31,7 +31,7 @@ void scrollText(const char *p) {
   uint8_t charWidth;
   uint8_t cBuf[8];  // this should be ok for all built-in fonts
 
-  Serial.println("\nScrolling text");
+  //Serial.println("\nScrolling text");
   mx.clear();
   mx.control(MD_MAX72XX::INTENSITY, LED_INTENSITY);
   while (*p != '\0') {
@@ -56,7 +56,7 @@ void scrollText(const char *p) {
 }
 
 void bullseye() {
-  Serial.println("Bullseye");
+  //Serial.println("Bullseye");
   mx.clear();
   mx.control(MD_MAX72XX::UPDATE, MD_MAX72XX::OFF);
 
@@ -116,15 +116,20 @@ void setup() {
   // Initialise the serial interface
   Serial.begin(9600);
   Serial.println(__FILE__ __DATE__);
+  delay(250);
+  // Read and discard any garbage data on the serial connection
+  while (Serial.available()) {
+    Serial.read();
+  }
 
   // Clear the input string array
   memset(inputString, 0, sizeof(inputString)); 
 
   //Initialise connection to MAX7219
- if(!mx.begin()) {
-  Serial.println("MAX72XX initialization failed");
- }
- mx.control(MD_MAX72XX::INTENSITY, LED_INTENSITY);
+  if(!mx.begin()) {
+    Serial.println("MAX72XX initialization failed");
+  }
+  mx.control(MD_MAX72XX::INTENSITY, LED_INTENSITY);
 }
 
 void loop() {
@@ -133,7 +138,7 @@ void loop() {
 
   while (Serial.available()) {
     char inChar = (char)Serial.read(); // Read the incoming byte
-    Serial.print(inChar);
+    //Serial.print(inChar);
 
     if (inChar == '\n') { // Check if newline character is received
       inputString[strcspn(inputString, "\r\n")] = '\0'; // Terminate the string
@@ -155,7 +160,7 @@ void loop() {
   
   // If a complete string is received, do something with it
   if (stringComplete) {
-    Serial.println("Received: " + String(inputString)); // Print the received string
+    //Serial.println("Received: " + String(inputString)); // Print the received string
     // Do something with the received string here
     scrollText(inputString);
     // Clear the input string array for the next input
